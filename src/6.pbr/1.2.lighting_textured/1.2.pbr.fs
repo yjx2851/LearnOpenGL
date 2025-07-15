@@ -101,6 +101,10 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 // 次表面散射：使用两个指数项的总和来模拟光在材质内部的散射行为
 vec3 SubsurfaceScattering(vec3 L, vec3 V, vec3 N, vec3 lightColor, float thickness)
 {
+    // 计算入射角对透射的影响（Fresnel透射效应）
+    float NdotL = max(dot(N, L), 0.0);
+    float transmissionFactor = 1.0 - pow(1.0 - NdotL, 5.0); // 简化的透射Fresnel
+    
     // 计算透射光方向 (光线经过材质后的方向)
     vec3 H = normalize(L + N * scatterPower);
     
@@ -121,7 +125,8 @@ vec3 SubsurfaceScattering(vec3 L, vec3 V, vec3 N, vec3 lightColor, float thickne
     float scatterProfile = pow(max(VdotH, 0.0), scatterPower) * max(LdotH, 0.0);
     
     // 计算最终的次表面散射贡献
-    vec3 subsurface = lightColor * totalScatter * scatterProfile;
+    // 应用透射因子来模拟入射角的影响
+    vec3 subsurface = lightColor * totalScatter * scatterProfile * transmissionFactor;
     
     return subsurface;
 }
