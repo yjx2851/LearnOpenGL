@@ -137,6 +137,13 @@ int main()
         glm::mat4 view = camera.GetViewMatrix();
         shader.setMat4("view", view);
         shader.setVec3("camPos", camera.Position);
+        
+        // 设置次表面散射参数
+        shader.setFloat("scatterDistance1", 0.1f);    // 浅层散射距离
+        shader.setFloat("scatterDistance2", 0.5f);    // 深层散射距离
+        shader.setFloat("scatterWeight1", 0.8f);      // 浅层散射权重
+        shader.setFloat("scatterWeight2", 0.2f);      // 深层散射权重
+        shader.setFloat("scatterPower", 2.0f);        // 散射强度指数
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, albedo);

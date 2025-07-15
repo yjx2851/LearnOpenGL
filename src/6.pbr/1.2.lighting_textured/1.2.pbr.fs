@@ -17,6 +17,13 @@ uniform vec3 lightColors[4];
 
 uniform vec3 camPos;
 
+// subsurface scattering parameters
+uniform float scatterDistance1;
+uniform float scatterDistance2;
+uniform float scatterWeight1;
+uniform float scatterWeight2;
+uniform float scatterPower;
+
 const float PI = 3.14159265359;
 // ----------------------------------------------------------------------------
 // Easy trick to get tangent-normals to world-space to keep PBR code simplified.
@@ -53,6 +60,16 @@ float DistributionGGX(vec3 N, vec3 H, float roughness)
 
     return nom / denom;
 }
+
+// ----------------------------------------------------------------------------
+float GeneralizedTrowbridgeReitz(float c,vec3 N, vec3 H, float roughness,float gamma)
+{
+    float a = roughness*roughness;
+    float NdotH2=max(dot(N,H),0.0)*max(dot(N,H),0.0);
+    float denom=pow(a*NdotH2+(1-NdotH2),gamma);
+    return c/denom;
+}
+
 // ----------------------------------------------------------------------------
 float GeometrySchlickGGX(float NdotV, float roughness)
 {
@@ -79,6 +96,36 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
+
+// ----------------------------------------------------------------------------
+// 次表面散射：使用两个指数项的总和来模拟光在材质内部的散射行为
+vec3 SubsurfaceScattering(vec3 L, vec3 V, vec3 N, vec3 lightColor, float thickness)
+{
+    // 计算透射光方向 (光线经过材质后的方向)
+    vec3 H = normalize(L + N * scatterPower);
+    
+    // 计算光线与法线的夹角，用于计算散射强度
+    float VdotH = max(dot(-V, H), 0.0);
+    float LdotH = max(dot(L, H), 0.0);
+    
+    // 使用两个指数项的总和来模拟不同深度的散射
+    // 第一个指数项：浅层散射，主要影响近表面的散射
+    float scatter1 = exp(-thickness / scatterDistance1);
+    // 第二个指数项：深层散射，模拟更深层的光线传播
+    float scatter2 = exp(-thickness / scatterDistance2);
+    
+    // 组合两个散射项，使用不同的权重
+    float totalScatter = scatterWeight1 * scatter1 + scatterWeight2 * scatter2;
+    
+    // 考虑视角和光线方向的影响
+    float scatterProfile = pow(max(VdotH, 0.0), scatterPower) * max(LdotH, 0.0);
+    
+    // 计算最终的次表面散射贡献
+    vec3 subsurface = lightColor * totalScatter * scatterProfile;
+    
+    return subsurface;
+}
+
 // ----------------------------------------------------------------------------
 void main()
 {		
@@ -107,11 +154,18 @@ void main()
         vec3 radiance = lightColors[i] * attenuation;
 
         // Cook-Torrance BRDF
-        float NDF = DistributionGGX(N, H, roughness);   
+        // float NDF = DistributionGGX(N, H, roughness);   
+        // 主镜面 GTR分布
+        float specular_GTR = GeneralizedTrowbridgeReitz(roughness*roughness/PI,N, H, roughness, 2.0);
+
+        // 清漆层 GTR分布
+        float varnish_GTR = GeneralizedTrowbridgeReitz((roughness*roughness)/(PI*log(roughness*roughness + 0.01)),N,H,roughness, 1.0);
+        float GTR = specular_GTR + varnish_GTR;
+        
         float G   = GeometrySmith(N, V, L, roughness);      
         vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
            
-        vec3 numerator    = NDF * G * F; 
+        vec3 numerator    = specular_GTR * G * F; 
         float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
         vec3 specular = numerator / denominator;
         
@@ -129,8 +183,16 @@ void main()
         // scale light by NdotL
         float NdotL = max(dot(N, L), 0.0);        
 
+        // 次表面散射计算 (适用于非金属材质)
+        // 使用roughness纹理的绿色通道作为材质厚度信息
+        float thickness = texture(roughnessMap, TexCoords).g;
+        vec3 subsurface = SubsurfaceScattering(L, V, N, radiance, thickness);
+        
+        // 次表面散射主要影响非金属材质
+        subsurface *= (1.0 - metallic) * albedo;
+
         // add to outgoing radiance Lo
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;  // note that we already multiplied the BRDF by the Fresnel (kS) so we won't multiply by kS again
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL + subsurface;  // note that we already multiplied the BRDF by the Fresnel (kS) so we won't multiply by kS again
     }   
     
     // ambient lighting (note that the next IBL tutorial will replace 
